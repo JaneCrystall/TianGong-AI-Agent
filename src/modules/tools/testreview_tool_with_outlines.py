@@ -261,15 +261,15 @@ class ReviewToolWithDetailedOutlines(BaseTool):
         # )
 
 
-        # for index, pinecone_content in enumerate(pinecone_contents):
-        #     response = co.rerank(
-        #         model="rerank-english-v2.0",
-        #         query=queries[index],
-        #         documents=pinecone_content,
-        #         top_n=30,
-        #     )
-        #     result = [result.document["text"] for result in response.results]
-        #     rerank_response.extend(result)
+        for index, pinecone_content in enumerate(pinecone_contents):
+            response = co.rerank(
+                model="rerank-english-v2.0",
+                query=queries[index],
+                documents=pinecone_content,
+                top_n=30,
+            )
+            result = [result.document["text"] for result in response.results]
+            rerank_response.extend(result)
 
         summary_response = summary_chain.run(
             {
