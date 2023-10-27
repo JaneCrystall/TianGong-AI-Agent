@@ -74,30 +74,25 @@ class ReviewToolWithDetailedOutlines(BaseTool):
             model_kwargs={"max_tokens_to_sample": 2048, "temperature": 0},
         )
 
-        # chain = load_summarize_chain(llm_chat, chain_type="stuff")
-
         # Define prompt
-        prompt_template = """You a worldclass literature review writter. You must:
-        based on the following provided information and your own knowledge, provide a logical, clear, well-organized, and critically analyzed review to respond the query:
+        prompt_template = """You are a worldclass paper introduction writter. You must:
+        based on the following provided information and your own knowledge, provide a logical, clear, well-organized, and critically analyzed introduction to respond the query:
         "{query}". 
         You must:
-        delve deep into the topic and provide an exhaustive answer;
-        ensure review as detailed as possible;
-        ensure each section and paragraph are fully discussed with detailed case studies and examples;
-        use multiple case studies or examples to support and enrich your arguments;
-        ensure review length longer than {length} words as user request;
+        provide sufficient evidents to support user's arguements;
+        ensure each paragraph are fully discussed with detailed case studies and examples;
+        use multiple case studies or examples to support and enrich arguments;
+        ensure introduction length longer than {length} words as user request;
         give in-text citations where relevant in Author-Date mode, NOT in Numeric mode.
 
-        UPLOADED INFO:
-        "{uploaded_docs}".
-
-        KNOWLEDGE BASE Search Results:
+       Information:
         "{pinecone_docs}".
 
         """
 
+
         prompt = PromptTemplate(
-            input_variables=["query", "length", "uploaded_docs", "pinecone_docs"],
+            input_variables=["query", "length", "pinecone_docs"],
             template=prompt_template,
         )
 
@@ -158,12 +153,12 @@ class ReviewToolWithDetailedOutlines(BaseTool):
             "properties": {
                 "query": {
                     "title": "Query",
-                    "description": "Multiple queries extracted for a vector database semantic search from a chat history, separate queries with a semicolon",
+                    "description": "Multiple arguements extracted for a vector database semantic search from user's query, separate queries with a semicolon",
                     "type": "string",
                 },
                 "length": {
-                    "title": "Request Review Length",
-                    "description": "The length of the review requested by the user, in words",
+                    "title": "Request Text Length",
+                    "description": "The length of the introduction requested by the user, in words",
                     "type": "string",
                 },
                 "created_at": {
@@ -177,9 +172,9 @@ class ReviewToolWithDetailedOutlines(BaseTool):
 
         prompt_func_calling_msgs = [
             SystemMessage(
-                content="You are a world class algorithm for extracting the all queries and filters from a chat history, for searching vector database. Give the user's story line, extract and list all the key queries that need to be addressed for a review. Each query should be speccific, independent and structured to facilitate separate searches in a vector database. Make ensure to provide multiple queries to fully cover the user's request. Make sure to answer in the correct structured format."
+                content="You are a world class algorithm for extracting the all arguments and filters from user's query, for searching vector database. Give the user's key arguements, extract and list all the key arguments that need to be claimed for an introduction. Each arguement must be conslusive, speccific, independent, and complete. Each arguement must be structured to facilitate separate searches in a vector database. Make sure to answer in the correct structured format. For example, user's argurment is 'Building material stock (MS) is important for human wellbeing but has large resource/energy impacts. Managing building MS is crucial for sustainability and climate goals.', your answer should be 'Building material stock (MS) is important for human wellbeing.', 'Building material stock has large resource/energy impacts.', and 'Managing building MS is crucial for sustainability and climate goals.'",
             ),
-            HumanMessage(content="The chat history:"),
+            HumanMessage(content="The User Query:"),
             HumanMessagePromptTemplate.from_template("{input}"),
         ]
 
@@ -227,12 +222,12 @@ class ReviewToolWithDetailedOutlines(BaseTool):
         user_original_latest_query = (
             st.session_state["xata_history"].messages[-1].content
         )
+
         func_calling_outline = self.outline_func_calling_chain().run(
             user_original_latest_query
         )
         outline_response = func_calling_outline.get("query")
         queries = outline_response.split("; ")
-        summary_chain = self.summary_chain()
 
         try:
             created_at = json.loads(func_calling_outline.get("created_at", None))
@@ -245,66 +240,61 @@ class ReviewToolWithDetailedOutlines(BaseTool):
         if created_at:
             filters["created_at"] = created_at
 
-        try:
-            history = st.session_state["xata_history"].messages[-2].content
-        except IndexError:
-            history = []
+        summary_chain = self.summary_chain()
 
-        k = 60
-        rerank_response = []
+        k = 10
+        # rerank_response = []
         summary_response = []
-        if history == []:
-            pinecone_docs = await asyncio.gather(
-                *[
-                    search_pinecone.async_similarity(query=query, top_k=k)
-                    for query in queries
-                ]
-            )
-            # uploaded_docs = await asyncio.gather(
-            #     *[
-            #         self.search_uploaded_docs(query=query, top_k=k)
-            #         for query in queries
-            #     ]
-            # )
-            pinecone_contents = search_pinecone.get_contentslist(pinecone_docs)
+        pinecone_docs = await asyncio.gather(
+            *[
+                search_pinecone.async_similarity(query=query, top_k=k, extend=1)
+                for query in queries
+            ]
+        )
+        pinecone_contents = search_pinecone.get_contentslist(pinecone_docs)
 
-            for index, pinecone_content in enumerate(pinecone_contents):
-                response = co.rerank(
-                    model="rerank-english-v2.0",
-                    query=queries[index],
-                    documents=pinecone_content,
-                    top_n=30,
-                )
-                result = [result.document["text"] for result in response.results]
-                rerank_response.extend(result)
+        # uploaded_docs = await asyncio.gather(
+        #     *[
+        #         self.search_uploaded_docs(query=query, top_k=k)
+        #         for query in queries
+        #     ]
+        # )
 
-            summary_response = summary_chain.run(
-                {
-                    "query": user_original_latest_query,
-                    "length": length,
-                    "uploaded_docs": "",
-                    "pinecone_docs": rerank_response,
-                },
-            )
-            # summary_response = await asyncio.gather(
-            #     *[
-            #         summary_chain.arun(
-            #             {
-            #                 "query": query,
-            #                 "uploaded_docs": "",
-            #                 "pinecone_docs": pinecone_doc,
-            #             }
-            #         )
-            #         for query, pinecone_doc in zip(queries, pinecone_docs)
-            #     ]
-            # )
-            # response = review_chain.run(
-            #     {
-            #         "query": user_original_latest_query,
-            #         "summary": summary_response,
-            #         "length": length,
-            #     },
-            # )
-            return summary_response
-        else:
-            return "Go for RefineTool."
+
+        # for index, pinecone_content in enumerate(pinecone_contents):
+        #     response = co.rerank(
+        #         model="rerank-english-v2.0",
+        #         query=queries[index],
+        #         documents=pinecone_content,
+        #         top_n=30,
+        #     )
+        #     result = [result.document["text"] for result in response.results]
+        #     rerank_response.extend(result)
+
+        summary_response = summary_chain.run(
+            {
+                "query": user_original_latest_query,
+                "length": length,
+                "pinecone_docs": pinecone_contents,
+            },
+        )
+        # summary_response = await asyncio.gather(
+        #     *[
+        #         summary_chain.arun(
+        #             {
+        #                 "query": query,
+        #                 "uploaded_docs": "",
+        #                 "pinecone_docs": pinecone_doc,
+        #             }
+        #         )
+        #         for query, pinecone_doc in zip(queries, pinecone_docs)
+        #     ]
+        # )
+        # response = review_chain.run(
+        #     {
+        #         "query": user_original_latest_query,
+        #         "summary": summary_response,
+        #         "length": length,
+        #     },
+        # )
+        return summary_response
